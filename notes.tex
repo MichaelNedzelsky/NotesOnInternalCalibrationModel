@@ -268,17 +268,40 @@ pseudo-wavelength positions $\mathbf{u}_\text{obs}$:
 
 \subsubsection{Instrument Response and Effective Basis}
 
-The instrument response is encoded in the line spread function (LSF)
-matrix $\mathbf{A} \in \mathbb{R}^{G \times G}$, defined on a fine
-grid ($\Delta u = 0.05$, $u \in [-4, 64]$).  The \emph{effective
-basis} $\mathbf{E}$ maps source coefficients directly to predicted
-observations by convolving each basis function with the LSF:
+The instrument response of each calibration unit is characterised by
+its line spread function (LSF) and dispersion relation.  A nominal
+instrument model (computed externally from Astrium's numerical LSFs
+and the dispersion relations) provides per-CU matrices
+$A_{ij}^{\text{nom},c}$ that encode the full instrument response of
+CU~$c$ relative to the reference CU:
+\begin{equation}
+  A_{ij}^{\text{nom},c} = I_c \cdot I_{\text{ref}}^{\dagger},
+\end{equation}
+where $I_c$ is the instrument kernel for CU~$c$ and
+$I_{\text{ref}}^{\dagger}$ is the pseudo-inverse of the reference
+kernel.  For the reference CU,
+$A_{ij}^{\text{nom,ref}} = \delta_{ij}$ (identity).
+
+In the current implementation, \textbf{we use only the reference
+CU's matrix $\mathbf{A}^{\text{ref}}$ for all epochs}, regardless of
+which CU observed them.  The per-CU nominal matrices are available
+but not used (the code supports this via a
+\texttt{--use-nominal-aij} flag, currently set to \texttt{False}).
+This means the effective basis~$\mathbf{E}$ is the same for all
+calibration units, and the correction~$\Delta\mathbf{M}^c$ must
+capture the \emph{entire} differential instrument response between
+CU~$c$ and the reference, not just small residuals.
+
+The \emph{effective basis} $\mathbf{E}$ maps source coefficients to
+predicted observations by convolving each basis function with the
+reference LSF.  On the fine grid
+($\Delta u = 0.05$, $u \in [-4, 64]$, $G = 1361$ points):
 \begin{equation}
   \label{eq:eff-basis-fine}
-  E^\text{fine}_{jk} = \sum_m A_{jm}\, B_k(u^\text{fine}_m)\, \Delta u,
+  E^\text{fine}_{jk} = \sum_m A^\text{ref}_{jm}\, B_k(u^\text{fine}_m)\, \Delta u,
   \qquad j = 1, \ldots, G,
 \end{equation}
-then interpolating to the observation positions:
+then interpolated to the per-epoch observation positions:
 \begin{equation}
   \label{eq:eff-basis}
   E_{ik} = \operatorname{interp}\!\bigl(E^\text{fine}_{:,k},\;
@@ -307,6 +330,12 @@ where $\mathbf{E}^\text{corr} = \mathbf{E} + \Delta\mathbf{M}^c
 \mathbf{B}$ is the corrected effective basis.  For the reference CU
 (row~5, FoV~Following), $\Delta\mathbf{M}^\text{ref} = \mathbf{0}$ by
 convention.
+
+Since the base effective basis~$\mathbf{E}$ uses only the reference
+Aij for all CUs, the correction~$\Delta\mathbf{M}^c$ absorbs the
+full differential response.  In a future configuration where per-CU
+nominal Aij are used, $\Delta\mathbf{M}^c$ would only need to capture
+small residual deviations from the nominal model.
 
 The correction is \emph{linear in~$\mathbf{b}_s$} for fixed
 $\Delta\mathbf{M}^c$, so the source update remains a standard linear
