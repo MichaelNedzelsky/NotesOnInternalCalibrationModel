@@ -1,0 +1,589 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{xcolor}
+\usepackage{siunitx}
+
+\graphicspath{{figures/}}
+
+\title{Notes on the Internal Calibration Model\\for Gaia BP/RP Spectrophotometry}
+\author{}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+\newpage
+
+%----------------------------------------------------------------------
+\section{Experimental Data}
+\label{sec:data}
+%----------------------------------------------------------------------
+
+This section describes the dataset used for calibration experiments.
+All data originates from the Gaia BP/RP spectrophotometric pipeline
+and corresponds to the INIT data segment.
+
+%----------------------------------------------------------------------
+\subsection{Raw Data}
+\label{sec:raw-data}
+
+The input data consists of Parquet files containing epoch spectra for
+individual sources. Each source may have observations in two
+spectrophotometric bands:
+\begin{itemize}
+  \item \textbf{BP} (Blue Photometer): covering wavelengths
+    $330$--$680$~nm,
+  \item \textbf{RP} (Red Photometer): covering wavelengths
+    $640$--$1050$~nm.
+\end{itemize}
+
+Each epoch (a single transit observation of a source) contains:
+\begin{itemize}
+  \item 60 spectral samples with flux values and associated errors,
+  \item 60 reference pseudo-wavelength (PWL) positions,
+  \item per-sample validity mask,
+  \item metadata: transit ID, CCD row (1--7), field of view
+    (Preceding/Following), gate setting, window class (1D/2D),
+    across-scan (AC) position, acquisition time (OBMT), $G$ magnitude,
+    and source colour.
+\end{itemize}
+
+The transit ID encodes observation geometry: the on-board mission
+timeline (OBMT), field of view (FoV), CCD row, and AC pixel
+position.
+
+The raw dataset contains:
+\begin{itemize}
+  \item \num{99664} sources,
+  \item \num{1318322} epoch spectra (summed over both BP and RP).
+\end{itemize}
+
+%----------------------------------------------------------------------
+\subsection{Filtering}
+\label{sec:filtering}
+
+To match the operational Java pipeline, several filters are applied
+during data conversion. The filters and their configuration are
+specified in the YAML configuration file
+(\texttt{intcal\_test.yaml}).
+
+\subsubsection{Quality Filters}
+
+\begin{enumerate}
+  \item \textbf{NominalOnly.} Rejects epochs with non-standard gate
+    configurations: specifically, epochs marked as
+    \texttt{ComplexGate}, and 1D epochs (\texttt{wc=OneD}) that are
+    gated. Only ungated 1D and all 2D epochs pass this filter.
+
+  \item \textbf{UngatedOnly.} Rejects all gated epochs (gate $\neq
+    0$), keeping only ungated observations. This is stricter than
+    NominalOnly and removes gated 2D epochs as well.
+
+  \item \textbf{FilterHotColumns.} Rejects epochs affected by known
+    detector hot columns. For each epoch, the filter checks whether
+    any known hot column falls within the epoch's AC window range
+    during the epoch's OBMT time range. An epoch is rejected if the
+    total hot column strength exceeds a threshold of~1.0. The hot
+    column catalogue contains 6~BP and 14~RP entries, each with a
+    specific (CCD row, AC position, strength, OBMT range).
+\end{enumerate}
+
+\subsubsection{Time Range Filter}
+
+Only epochs within the INIT OBMT range are retained:
+\[
+  \text{OBMT} \in [122212800000000001,\; 169365600000000000].
+\]
+
+\subsubsection{Minimum Epochs Filter}
+
+After all per-epoch filters are applied, sources with fewer than 20
+remaining epochs (per XP type) are discarded entirely. This ensures
+that each retained source has sufficient observations for a reliable
+spectral fit.
+
+%----------------------------------------------------------------------
+\subsection{Valid Spectral Samples}
+\label{sec:valid-samples}
+
+Of the 60 raw samples per epoch, only those within the
+pseudo-wavelength (PWL) range $[2.0, 58.0]$ are used for
+calibration. The number of valid samples depends on the reference
+positions of each epoch, which vary with transit geometry. For the
+reference calibration unit:
+\begin{itemize}
+  \item BP: 53 valid samples (out of 60),
+  \item RP: 54 valid samples (out of 60).
+\end{itemize}
+Other calibration units may yield 53--59 valid samples per epoch,
+depending on their CCD row and field of view.
+
+%----------------------------------------------------------------------
+\subsection{Filtered Dataset}
+\label{sec:filtered-data}
+
+After applying all filters, the dataset is reduced to:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrr}
+  \toprule
+  & \textbf{Raw} & \textbf{After filtering} \\
+  \midrule
+  Sources (total)      & \num{99664} & \num{8559} \\
+  Epoch spectra (total) & \num{1318322} & \num{409887} \\
+  \midrule
+  Sources with BP data & -- & \num{8341} \\
+  Sources with RP data & -- & \num{7850} \\
+  Sources with both    & -- & \num{7632} \\
+  BP-only sources      & -- & \num{709} \\
+  RP-only sources      & -- & \num{218} \\
+  \midrule
+  BP epochs            & -- & \num{211808} \\
+  RP epochs            & -- & \num{198079} \\
+  \midrule
+  BP epochs/source     & -- & 20--67 (median 23) \\
+  RP epochs/source     & -- & 20--64 (median 23) \\
+  \bottomrule
+\end{tabular}
+\caption{Dataset size before and after filtering. The minimum of 20
+  epochs per source per XP type is enforced by the
+  \texttt{minNumEpochs} filter.}
+\label{tab:data-summary}
+\end{table}
+
+The filtering removes ${\sim}91\%$ of sources and ${\sim}69\%$ of
+epochs. The dominant factor is the minimum-epochs requirement: most
+sources in the raw data have fewer than 20 observations in a single
+band within the INIT time range.
+
+%----------------------------------------------------------------------
+\subsection{Calibration Units}
+\label{sec:cal-units}
+
+Observations are grouped into \emph{calibration units} (CUs) defined
+by the combination of:
+\begin{itemize}
+  \item XP type (BP or RP),
+  \item CCD row (1--7),
+  \item field of view (Preceding or Following).
+\end{itemize}
+This gives $2 \times 7 \times 2 = 28$ CUs in total. One CU per XP
+type is designated as the \emph{reference CU} (row~5, FoV~Following),
+whose instrument model is the identity by convention. The calibration
+therefore fits instrument corrections $\Delta M$ for $2 \times 13 =
+26$ non-reference CUs.
+
+%----------------------------------------------------------------------
+\subsection{Experimental Subsets}
+\label{sec:subsets}
+
+For development and validation, we work with subsets of the full
+\num{8559}-source dataset. Sources are selected by taking the first
+$N$ source IDs (sorted), and all their epochs are included. Typical
+experimental configurations:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{rrrrl}
+  \toprule
+  \textbf{Sources} & \textbf{Train} & \textbf{Test} & \textbf{Approx.\ epochs} & \textbf{Purpose} \\
+  \midrule
+  200 & 160 & 40 & ${\sim}507\,\text{K}$ & Quick iteration \\
+  500 & 400 & 100 & ${\sim}1.4\,\text{M}$ & Standard experiments \\
+  \bottomrule
+\end{tabular}
+\caption{Experimental source subsets. Train/test split is random with
+  a fixed seed for reproducibility. The test set monitors overfitting
+  of the shared instrument model.}
+\label{tab:subsets}
+\end{table}
+
+The train/test split is used for cross-validation of the instrument
+model: both training and test sources receive source updates each
+iteration, but only training sources contribute to the instrument
+update. A rising test loss relative to training loss would indicate
+overfitting of the shared instrument correction~$\Delta M$.
+
+\newpage
+%======================================================================
+\section{Mathematical Model}
+\label{sec:model}
+%======================================================================
+
+This section describes the forward model, loss function, and
+optimization algorithm used in the calibration.
+Table~\ref{tab:notation} summarises the notation.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{cll}
+  \toprule
+  \textbf{Symbol} & \textbf{Dimension} & \textbf{Description} \\
+  \midrule
+  $P$ & 53 (BP), 54 (RP) & Valid output samples per epoch \\
+  $K$ & 51 (BP), 54 (RP) & Source basis functions (after PCA) \\
+  $G$ & 1361 & Fine grid points in $A_{ij}$ \\
+  $N_s$ & varies & Number of epochs for source~$s$ \\
+  $S$ & total sources & Number of sources \\
+  $C$ & 13 per XP type & Non-reference calibration units \\
+  \bottomrule
+\end{tabular}
+\caption{Notation and dimensions.}
+\label{tab:notation}
+\end{table}
+
+%----------------------------------------------------------------------
+\subsection{Forward Model}
+\label{sec:forward-model}
+
+\subsubsection{Mean Spectrum}
+
+The mean spectrum of source~$s$ is represented as a linear
+combination of $K$ basis functions $B_k(u)$ (B-splines transformed
+by a PCA rotation):
+\begin{equation}
+  \label{eq:mean-spectrum}
+  h_s(u) = \sum_{k=1}^{K} b_{s,k}\, B_k(u),
+\end{equation}
+where $\mathbf{b}_s \in \mathbb{R}^K$ are the source coefficients to
+be estimated.  In matrix form, evaluated at the $P$ valid
+pseudo-wavelength positions $\mathbf{u}_\text{obs}$:
+\begin{equation}
+  \mathbf{h}_s = \mathbf{B}\, \mathbf{b}_s,
+  \qquad
+  B_{ik} = B_k(u_{\text{obs},i}),
+  \qquad
+  \mathbf{B} \in \mathbb{R}^{P \times K}.
+\end{equation}
+
+\subsubsection{Instrument Response and Effective Basis}
+
+The instrument response is encoded in the line spread function (LSF)
+matrix $\mathbf{A} \in \mathbb{R}^{G \times G}$, defined on a fine
+grid ($\Delta u = 0.05$, $u \in [-4, 64]$).  The \emph{effective
+basis} $\mathbf{E}$ maps source coefficients directly to predicted
+observations by convolving each basis function with the LSF:
+\begin{equation}
+  \label{eq:eff-basis-fine}
+  E^\text{fine}_{jk} = \sum_m A_{jm}\, B_k(u^\text{fine}_m)\, \Delta u,
+  \qquad j = 1, \ldots, G,
+\end{equation}
+then interpolating to the observation positions:
+\begin{equation}
+  \label{eq:eff-basis}
+  E_{ik} = \operatorname{interp}\!\bigl(E^\text{fine}_{:,k},\;
+    u_{\text{obs},i}\bigr),
+  \qquad
+  \mathbf{E} \in \mathbb{R}^{P \times K}.
+\end{equation}
+The base prediction (without instrument correction) for source~$s$ is
+then $\mathbf{f}^\text{base} = \mathbf{E}\, \mathbf{b}_s$.
+
+\subsubsection{Instrument Correction}
+\label{sec:im-correction}
+
+For a non-reference calibration unit~$c$, the prediction includes an
+additive correction via a matrix
+$\Delta\mathbf{M}^c \in \mathbb{R}^{P \times P}$ acting on the mean
+spectrum:
+\begin{equation}
+  \label{eq:prediction}
+  \mathbf{f}^\text{pred} = \mathbf{E}\, \mathbf{b}_s
+    + \Delta\mathbf{M}^c\, \mathbf{B}\, \mathbf{b}_s
+    = \bigl(\mathbf{E} + \Delta\mathbf{M}^c \mathbf{B}\bigr)\, \mathbf{b}_s
+    = \mathbf{E}^\text{corr}\, \mathbf{b}_s,
+\end{equation}
+where $\mathbf{E}^\text{corr} = \mathbf{E} + \Delta\mathbf{M}^c
+\mathbf{B}$ is the corrected effective basis.  For the reference CU
+(row~5, FoV~Following), $\Delta\mathbf{M}^\text{ref} = \mathbf{0}$ by
+convention.
+
+The correction is \emph{linear in~$\mathbf{b}_s$} for fixed
+$\Delta\mathbf{M}^c$, so the source update remains a standard linear
+regression problem.
+
+\subsubsection{Standardised Residuals}
+
+Given observed spectrum $\mathbf{f}$ with measurement errors
+$\boldsymbol{\sigma}$, the standardised residual for sample~$i$ of
+epoch~$e$ is:
+\begin{equation}
+  \label{eq:residual}
+  z_i = \frac{f_i - f^\text{pred}_i}{\sigma_i}.
+\end{equation}
+
+%----------------------------------------------------------------------
+\subsection{Loss Function}
+\label{sec:loss}
+
+The global objective to be minimised is:
+\begin{equation}
+  \label{eq:total-loss}
+  \mathcal{L}(\mathbf{b}, \Delta\mathbf{M})
+    = \underbrace{
+        \sum_{s,e,i} \rho_\delta\!\bigl(z_{s,e,i}\bigr)
+      }_{\mathcal{L}_\text{data}}
+    + \underbrace{
+        \frac{\lambda}{2} \sum_c
+          \bigl\|\Delta\mathbf{M}^c\bigr\|_F^2
+      }_{\mathcal{L}_\text{reg}},
+\end{equation}
+where the sum runs over all sources~$s$, their epochs~$e$, and valid
+samples~$i$.
+
+\subsubsection{Huber Loss}
+\label{sec:huber}
+
+The data fidelity term uses the Huber loss function:
+\begin{equation}
+  \label{eq:huber}
+  \rho_\delta(z) =
+  \begin{cases}
+    \dfrac{z^2}{2}
+      & \text{if } |z| \le \delta, \\[6pt]
+    \delta\,|z| - \dfrac{\delta^2}{2}
+      & \text{if } |z| > \delta,
+  \end{cases}
+\end{equation}
+with transition parameter $\delta = 1.345$.  This value provides 95\%
+asymptotic efficiency relative to ordinary least squares at the normal
+distribution while limiting the influence of outliers.
+
+The Huber loss interpolates between quadratic behaviour near zero
+(like least squares) and linear growth in the tails (like $L_1$),
+making it robust to outlying observations.  It is convex and
+differentiable everywhere, with derivative:
+\begin{equation}
+  \rho_\delta'(z) = \min\!\bigl(|z|, \delta\bigr) \cdot \operatorname{sign}(z)
+    = w(z) \cdot z,
+  \qquad
+  w(z) = \min\!\Bigl(1, \frac{\delta}{|z|}\Bigr).
+\end{equation}
+The function $w(z)$ serves as the IRLS weight (Section~\ref{sec:irls}).
+
+\subsubsection{Tikhonov Regularisation}
+\label{sec:regularisation}
+
+The regularisation term penalises the Frobenius norm of each
+instrument correction matrix $\Delta\mathbf{M}^c$:
+\begin{equation}
+  \label{eq:reg}
+  \mathcal{L}_\text{reg}
+    = \frac{\lambda}{2} \sum_{c=1}^{C}
+        \bigl\|\Delta\mathbf{M}^c\bigr\|_F^2,
+  \qquad
+  \lambda = 10^4.
+\end{equation}
+This prevents the instrument model from absorbing noise and
+astrophysical signal that properly belongs to the source spectra.  The
+choice $\lambda = 10^4$ yields a regularisation penalty that is
+${\sim}2\%$ of the total loss, providing effective control without
+over-constraining the instrument corrections.
+
+\textbf{No regularisation is applied to the source coefficients}
+$\mathbf{b}_s$.  Source spectra are physical quantities that should
+not be biased toward zero, and each source update is well-determined
+($N_s \cdot P \gg K$, typically ${\sim}1200$ observations for
+${\sim}52$ parameters).
+
+%----------------------------------------------------------------------
+\subsection{Alternating Optimisation}
+\label{sec:alternating}
+
+The loss~\eqref{eq:total-loss} is minimised by alternating between
+two steps, each of which is guaranteed not to increase the total loss.
+
+\subsubsection{Source Update (SU)}
+\label{sec:su}
+
+For each source $s$ independently, and for each XP type, solve:
+\begin{equation}
+  \label{eq:su}
+  \min_{\mathbf{b}_s}
+    \sum_{e \in \text{epochs}(s)} \sum_i
+      \rho_\delta\!\Biggl(
+        \frac{f_{e,i} - \bigl(\mathbf{E}^\text{corr}_e\,
+          \mathbf{b}_s\bigr)_i}{\sigma_{e,i}}
+      \Biggr),
+\end{equation}
+where $\mathbf{E}^\text{corr}_e = \mathbf{E} +
+\Delta\mathbf{M}^{c(e)} \mathbf{B}$ depends on the CU of epoch~$e$.
+All epochs of source~$s$ are stacked into a single design matrix
+$[\mathbf{E}^\text{corr}_{e_1}; \mathbf{E}^\text{corr}_{e_2};
+\ldots]$ and solved as one robust regression.
+
+Sources are decoupled in $\mathcal{L}_\text{data}$ and do not appear
+in $\mathcal{L}_\text{reg}$, so each source update can be performed
+independently.  Both training and test sources are updated.
+
+\subsubsection{Instrument Update (IU)}
+\label{sec:iu}
+
+For each non-reference CU~$c$ independently, the residuals from the
+base model (without any $\Delta\mathbf{M}$) are:
+\begin{equation}
+  r_{n,p} = f_{n,p} - \bigl(\mathbf{E}\, \mathbf{b}_{s(n)}\bigr)_p,
+\end{equation}
+where $n$ indexes epochs through CU~$c$ and $p$ indexes output
+samples.  The correction model for these residuals is:
+\begin{equation}
+  r_{n,p} = \sum_q \Delta M^c_{pq}\, h_{s(n),q} + \text{noise},
+\end{equation}
+where $\mathbf{h}_{s(n)} = \mathbf{B}\, \mathbf{b}_{s(n)}$ is the
+mean spectrum.
+
+\paragraph{Row decoupling.}
+A key structural property is that the \emph{rows of
+$\Delta\mathbf{M}^c$ decouple}: the unknowns in row~$p$ (i.e.,
+$\Delta M^c_{p,:}$) only appear in the equations for sample~$p$.
+This allows the $P \times P$ matrix to be solved as $P$ independent
+regressions, each with $P$~parameters and $N_c$~epochs:
+\begin{equation}
+  \label{eq:iu-row}
+  \min_{\boldsymbol{\delta}_p}
+    \sum_{n=1}^{N_c}
+      \rho_\delta\!\Biggl(
+        \frac{r_{n,p} - \mathbf{h}_{s(n)}^\top \boldsymbol{\delta}_p}
+             {\sigma_{n,p}}
+      \Biggr)
+    + \frac{\lambda}{2} \|\boldsymbol{\delta}_p\|^2,
+\end{equation}
+where $\boldsymbol{\delta}_p = \Delta\mathbf{M}^c[p, :]$.  This
+gives $P^2$ parameters per CU (e.g., $53^2 = 2809$ for BP), solved
+efficiently as $P$ small independent problems.
+
+\textbf{Only training sources contribute to the IU.}  This enables
+cross-validation: test sources receive source updates using the
+current $\Delta\mathbf{M}$, but their epochs are excluded from the
+instrument fit.
+
+The instrument correction $\Delta\mathbf{M}^c$ is re-estimated from
+scratch at each iteration (not refined incrementally), since the
+residuals $r_{n,p}$ already reflect the latest source coefficients.
+
+%----------------------------------------------------------------------
+\subsection{IRLS Solver}
+\label{sec:irls}
+
+Both the source and instrument updates are solved via Iteratively
+Reweighted Least Squares (IRLS).  The general problem is:
+\begin{equation}
+  \label{eq:irls-problem}
+  \min_{\mathbf{x}}
+    \sum_i \rho_\delta\!\bigl(b_i^s - (\mathbf{A}^s \mathbf{x})_i\bigr)
+    + \frac{\lambda}{2} \|\mathbf{x}\|^2,
+\end{equation}
+where $\mathbf{A}^s = \mathbf{A} / \boldsymbol{\sigma}$ and
+$\mathbf{b}^s = \mathbf{b} / \boldsymbol{\sigma}$ are pre-scaled by
+measurement errors.  For the source update, $\lambda = 0$.
+
+\paragraph{Algorithm.}
+\begin{enumerate}
+  \item \textbf{Initialise:} solve the unweighted (OLS) problem
+    \[
+      \bigl(\mathbf{A}^{s\top} \mathbf{A}^s + \lambda\,\mathbf{I}\bigr)\,
+        \mathbf{x}
+      = \mathbf{A}^{s\top} \mathbf{b}^s.
+    \]
+  \item \textbf{Iterate} (up to 30 iterations):
+    \begin{enumerate}
+      \item Compute standardised residuals:
+        $z_i = b^s_i - (\mathbf{A}^s \mathbf{x})_i$.
+      \item Compute IRLS weights:
+        $w_i = \min\!\bigl(1,\; \delta / |z_i|\bigr)$.
+      \item Solve the weighted normal equations:
+        \[
+          \bigl(\mathbf{A}^{s\top} \mathbf{W} \mathbf{A}^s
+            + \lambda\,\mathbf{I}\bigr)\, \mathbf{x}_\text{new}
+          = \mathbf{A}^{s\top} \mathbf{W}\, \mathbf{b}^s,
+        \]
+        where $\mathbf{W} = \operatorname{diag}(\mathbf{w})$.
+      \item Check convergence:
+        $\max_j |x_{\text{new},j} - x_j| < \text{tol} \cdot (1 + \max_j |x_j|)$,
+        with $\text{tol} = 10^{-6}$.
+    \end{enumerate}
+  \item Return $\mathbf{x}$ and the final Huber loss.
+\end{enumerate}
+
+The linear system in each IRLS step is solved via Cholesky
+factorisation ($\mathbf{A}^{s\top} \mathbf{W} \mathbf{A}^s +
+\lambda\,\mathbf{I}$ is positive definite for $\lambda > 0$).
+
+\paragraph{Convergence.}
+Each IRLS step solves a convex quadratic that majorises the Huber
+objective at the current~$\mathbf{x}$.  The Huber loss is therefore
+non-increasing at every IRLS step, and for $\delta = 1.345$
+(close to quadratic), convergence is typically reached in 3--5
+iterations.
+
+%----------------------------------------------------------------------
+\subsection{Monotonic Decrease Guarantee}
+\label{sec:monotone}
+
+Let $\mathcal{L}^k$ denote the total loss at the beginning of
+iteration~$k$.  The iteration proceeds as:
+\[
+  \mathbf{b}^k, \Delta\mathbf{M}^k
+  \;\xrightarrow{\text{SU}}\;
+  \mathbf{b}^{k+1}, \Delta\mathbf{M}^k
+  \;\xrightarrow{\text{IU}}\;
+  \mathbf{b}^{k+1}, \Delta\mathbf{M}^{k+1}.
+\]
+
+\begin{enumerate}
+  \item \textbf{SU:}
+    $\mathcal{L}(\mathbf{b}^{k+1}, \Delta\mathbf{M}^k)
+      \le \mathcal{L}(\mathbf{b}^k, \Delta\mathbf{M}^k) = \mathcal{L}^k$,
+    because each source minimisation can only decrease (or maintain)
+    the loss.
+
+  \item \textbf{IU:}
+    $\mathcal{L}(\mathbf{b}^{k+1}, \Delta\mathbf{M}^{k+1})
+      \le \mathcal{L}(\mathbf{b}^{k+1}, \Delta\mathbf{M}^k)$,
+    because each CU minimisation can only decrease (or maintain) the
+    loss.
+\end{enumerate}
+
+Combining: $\mathcal{L}^{k+1} \le \mathcal{L}^k$.  Since
+$\mathcal{L} \ge 0$, the sequence converges by the monotone
+convergence theorem.
+
+\paragraph{Per-source caveat.}
+The monotonicity guarantee applies to the \emph{total} loss, not to
+individual sources.  After the IU, individual sources may see a
+per-source loss increase because $\Delta\mathbf{M}^c$ is shared
+across all sources in a CU.  The subsequent SU always recovers all
+sources.
+
+%----------------------------------------------------------------------
+\subsection{Default Parameters}
+\label{sec:parameters}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llll}
+  \toprule
+  \textbf{Parameter} & \textbf{Symbol} & \textbf{Value} & \textbf{Description} \\
+  \midrule
+  Huber threshold & $\delta$ & 1.345 & 95\% efficiency at the normal \\
+  Regularisation strength & $\lambda$ & $10^4$ & Tikhonov penalty for $\Delta\mathbf{M}$ \\
+  IRLS max iterations & -- & 30 & Per subproblem \\
+  IRLS tolerance & -- & $10^{-6}$ & Relative coefficient change \\
+  Max outer iterations & -- & 10--15 & SU/IU alternation cycles \\
+  \bottomrule
+\end{tabular}
+\caption{Default calibration parameters.}
+\label{tab:parameters}
+\end{table}
+
+\end{document}
