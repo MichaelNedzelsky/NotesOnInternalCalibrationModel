@@ -252,23 +252,24 @@ CU depends on the Aij mode (Section~\ref{sec:aij}):
 \label{sec:subsets}
 
 For development and validation, we work with subsets of the full
-\num{8559}-source dataset. Sources are selected by taking the first
-$N$ source IDs (sorted), and all their epochs are included. Typical
-experimental configurations:
+\num{8557}-source dataset. Sources are selected by taking the first
+$N$ source IDs (sorted), and all their epochs are included.
 
 \begin{table}[h]
 \centering
-\begin{tabular}{rrrrl}
+\begin{tabular}{rrrrrrl}
   \toprule
-  \textbf{Sources} & \textbf{Train} & \textbf{Test} & \textbf{Approx.\ epochs} & \textbf{Purpose} \\
+  \textbf{Sources} & \textbf{Train} & \textbf{Test}
+    & \textbf{Test frac.} & \textbf{Train obs} & \textbf{Test obs}
+    & \textbf{Purpose} \\
   \midrule
-  200 & 160 & 40 & ${\sim}507\,\text{K}$ & Quick iteration \\
-  500 & 400 & 100 & ${\sim}1.4\,\text{M}$ & Standard experiments \\
+  200  & 160 & 40  & 20\% & \num{408300}  & \num{98879}  & Pilot runs \\
+  1000 & 700 & 300 & 30\% & \num{1900814} & \num{814925} & Production runs \\
   \bottomrule
 \end{tabular}
 \caption{Experimental source subsets. Train/test split is random with
-  a fixed seed for reproducibility. The test set monitors overfitting
-  of the shared instrument model.}
+  a fixed seed (42) for reproducibility. The test set monitors
+  overfitting of the shared instrument model.}
 \label{tab:subsets}
 \end{table}
 
