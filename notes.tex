@@ -264,7 +264,7 @@ $N$ source IDs (sorted), and all their epochs are included.
     & \textbf{Purpose} \\
   \midrule
   200  & 160 & 40  & 20\% & \num{408300}  & \num{98879}  & Pilot runs \\
-  1000 & 700 & 300 & 30\% & \num{1900814} & \num{814925} & Production runs \\
+  1000 & 700 & 300 & 30\% & \num{1900814} & \num{814925} & Experiment runs \\
   \bottomrule
 \end{tabular}
 \caption{Experimental source subsets. Train/test split is random with
@@ -343,11 +343,11 @@ $u \in [-4, 64]$, $G = 1361$ points).  These matrices encode the full
 instrument response: how photons at internal wavelength $u_m$ produce
 signal at detector position~$u_j$.
 
-For the reference CU, $\mathbf{A}^{\text{ref}}$ is the full LSF
-convolution kernel $I_\text{ref} \cdot I_\text{ref}^\dagger$.  It is
-\emph{not} the identity matrix: its entries are concentrated in a band
-around the diagonal (diagonal values ${\sim}0.04$--$0.15$, row
-sums~${\approx}1$).
+For the reference CU, $\mathbf{A}^{\text{nom,ref}}$ encodes the LSF
+convolution and dispersion relation of the reference calibration unit
+(row~4, FoV~Following).  It is \emph{not} the identity matrix: its
+entries are concentrated in a band around the diagonal (diagonal
+values ${\sim}0.04$--$0.15$, row sums~${\approx}1$).
 
 \paragraph{Three Aij modes.}
 The implementation supports three modes for choosing which $A_{ij}$
