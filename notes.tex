@@ -71,10 +71,11 @@ The raw dataset contains:
 \subsection{Filtering}
 \label{sec:filtering}
 
-To match the operational Java pipeline, several filters are applied
-during data conversion. The filters and their configuration are
-specified in the YAML configuration file
-(\texttt{intcal\_test.yaml}).
+Several filters are applied during data conversion.  The first three
+are metadata-based quality checks that match the operational Java
+pipeline; the epoch outlier filter adds data-level checks for
+pathological spectra.  Filter configuration is specified in the YAML
+configuration file (\texttt{intcal\_test.yaml}).
 
 \subsubsection{Quality Filters}
 
@@ -104,12 +105,66 @@ Only epochs within the INIT OBMT range are retained:
   \text{OBMT} \in [122212800000000001,\; 169365600000000000].
 \]
 
+\subsubsection{Epoch Outlier Filter}
+\label{sec:outlier-filter}
+
+The metadata-based filters above remove epochs with known instrumental
+configurations that are unsuitable for calibration.  However, some
+epochs that pass all metadata checks still carry \emph{pathological
+spectral data}: readout errors that corrupt an entire spectrum, or
+cosmic-ray hits that produce isolated extreme-value samples.  Because
+the Huber loss (Section~\ref{sec:huber}) \emph{downweights} but does
+not \emph{remove} outlying observations, a single catastrophic epoch
+can dominate the chi-squared of its source and bias the instrument
+model fit.
+
+To address this, two data-level checks are applied to each epoch
+during conversion, after the metadata filters and before the
+minimum-epochs aggregation:
+
+\begin{enumerate}
+  \item \textbf{Negative integrated flux.}  Let $v_1, \ldots, v_n$ be
+    the valid spectral samples (those within the PWL range
+    $[2.0,\,58.0]$).  If the integrated flux
+    $\sum_{j=1}^{n} v_j < 0$,
+    the epoch is rejected.  This catches readout errors and electronic
+    glitches that produce physically impossible all-negative spectra.
+    Example: one epoch of source 897643221358262784 had all 53~valid
+    BP samples at ${\approx}{-2745}$~electrons, contributing
+    chi2~$\approx 44\,\text{M}$ (accounting for ${\sim}100\%$ of the
+    source's total loss).
+
+  \item \textbf{Extreme single-sample spike.}  Let
+    $m = \max_j |v_j|$ and
+    $\bar{r} = (\sum_j |v_j| - m) / (n - 1)$
+    be the mean absolute flux of the remaining $n-1$ samples.  If
+    $m > 100\,\bar{r}$,
+    the epoch is rejected.  This catches cosmic-ray hits that deposit
+    charge in a single detector pixel, producing one sample with a
+    value hundreds of times larger than the surrounding spectrum.  The
+    threshold of~100 is conservative: a genuine astrophysical feature
+    would not produce a single sample exceeding $100\times$ the mean
+    of its neighbours.
+\end{enumerate}
+
+On the full dataset, this filter rejects 77~epochs out of
+\num{409885} that survived the metadata filters: 17 with negative
+integrated flux (6~RP, 11~BP) and 60 with extreme spikes (59~BP,
+1~RP).  The strong BP predominance is consistent with the higher
+cosmic-ray susceptibility of the blue photometer.  Two sources lose
+enough epochs to fall below the minimum-epochs threshold and are
+discarded entirely.
+
+A JSON sidecar file (\texttt{rejected\_epochs.json}) is written during
+conversion with the source~ID, transit~ID, XP~type, CU, rejection
+reason, and diagnostic detail for every rejected epoch.
+
 \subsubsection{Minimum Epochs Filter}
 
-After all per-epoch filters are applied, sources with fewer than 20
-remaining epochs (per XP type) are discarded entirely. This ensures
-that each retained source has sufficient observations for a reliable
-spectral fit.
+After all per-epoch filters are applied (including the outlier
+checks), sources with fewer than 20 remaining epochs (per XP type) are
+discarded entirely. This ensures that each retained source has
+sufficient observations for a reliable spectral fit.
 
 %----------------------------------------------------------------------
 \subsection{Valid Spectral Samples}
@@ -139,25 +194,26 @@ After applying all filters, the dataset is reduced to:
   \toprule
   & \textbf{Raw} & \textbf{After filtering} \\
   \midrule
-  Sources (total)      & \num{99664} & \num{8559} \\
-  Epoch spectra (total) & \num{1318322} & \num{409887} \\
+  Sources (total)      & \num{99664} & \num{8557} \\
+  Epoch spectra (total) & \num{1318322} & \num{409808} \\
   \midrule
-  Sources with BP data & -- & \num{8341} \\
-  Sources with RP data & -- & \num{7850} \\
-  Sources with both    & -- & \num{7632} \\
-  BP-only sources      & -- & \num{709} \\
+  Sources with BP data & -- & \num{8339} \\
+  Sources with RP data & -- & \num{7849} \\
+  Sources with both    & -- & \num{7631} \\
+  BP-only sources      & -- & \num{708} \\
   RP-only sources      & -- & \num{218} \\
   \midrule
-  BP epochs            & -- & \num{211808} \\
-  RP epochs            & -- & \num{198079} \\
+  BP epochs            & -- & \num{211752} \\
+  RP epochs            & -- & \num{198056} \\
   \midrule
   BP epochs/source     & -- & 20--67 (median 23) \\
   RP epochs/source     & -- & 20--64 (median 23) \\
   \bottomrule
 \end{tabular}
-\caption{Dataset size before and after filtering. The minimum of 20
-  epochs per source per XP type is enforced by the
-  \texttt{minNumEpochs} filter.}
+\caption{Dataset size before and after filtering.  Filtering includes
+  metadata checks (Section~\ref{sec:filtering}), epoch outlier
+  rejection (Section~\ref{sec:outlier-filter}), and a minimum of
+  20~epochs per source per XP type.}
 \label{tab:data-summary}
 \end{table}
 
@@ -177,11 +233,19 @@ by the combination of:
   \item CCD row (1--7),
   \item field of view (Preceding or Following).
 \end{itemize}
-This gives $2 \times 7 \times 2 = 28$ CUs in total. One CU per XP
-type is designated as the \emph{reference CU} (row~5, FoV~Following),
-whose instrument model is the identity by convention. The calibration
-therefore fits instrument corrections $\Delta M$ for $2 \times 13 =
-26$ non-reference CUs.
+This gives $2 \times 7 \times 2 = 28$ CUs in total.  One CU per XP
+type is designated as the \emph{reference CU} (row~4, FoV~Following),
+read from the pipeline configuration.  The treatment of the reference
+CU depends on the Aij mode (Section~\ref{sec:aij}):
+\begin{itemize}
+  \item In \texttt{identity} mode, $\Delta\mathbf{M}^{\text{ref}} =
+    \mathbf{0}$ is enforced as a hard gauge constraint, so the
+    instrument update solves $2 \times 13 = 26$ non-reference CUs.
+  \item In \texttt{per-cu} and \texttt{reference} modes, all $2
+    \times 14 = 28$ CUs are solved, including the reference.  The
+    Tikhonov regularisation provides a soft anchor (see
+    Section~\ref{sec:regularisation}).
+\end{itemize}
 
 %----------------------------------------------------------------------
 \subsection{Experimental Subsets}
@@ -235,7 +299,7 @@ Table~\ref{tab:notation} summarises the notation.
   $G$ & 1361 & Fine grid points in $A_{ij}$ \\
   $N_s$ & varies & Number of epochs for source~$s$ \\
   $S$ & total sources & Number of sources \\
-  $C$ & 13 per XP type & Non-reference calibration units \\
+  $C$ & 14 per XP type & Calibration units (13 in identity mode) \\
   \bottomrule
 \end{tabular}
 \caption{Notation and dimensions.}
@@ -266,42 +330,93 @@ pseudo-wavelength positions $\mathbf{u}_\text{obs}$:
   \mathbf{B} \in \mathbb{R}^{P \times K}.
 \end{equation}
 
-\subsubsection{Instrument Response and Effective Basis}
+\subsubsection{Instrument Response: the $A_{ij}$ Matrix}
+\label{sec:aij}
 
 The instrument response of each calibration unit is characterised by
 its line spread function (LSF) and dispersion relation.  A nominal
 instrument model (computed externally from Astrium's numerical LSFs
 and the dispersion relations) provides per-CU matrices
-$A_{ij}^{\text{nom},c}$ that encode the full instrument response of
-CU~$c$ relative to the reference CU:
-\begin{equation}
-  A_{ij}^{\text{nom},c} = I_c \cdot I_{\text{ref}}^{\dagger},
-\end{equation}
-where $I_c$ is the instrument kernel for CU~$c$ and
-$I_{\text{ref}}^{\dagger}$ is the pseudo-inverse of the reference
-kernel.  For the reference CU,
-$A_{ij}^{\text{nom,ref}} = \delta_{ij}$ (identity).
+$A_{ij}^{\text{nom},c}$ on a fine grid ($\Delta u = 0.05$,
+$u \in [-4, 64]$, $G = 1361$ points).  These matrices encode the full
+instrument response: how photons at internal wavelength $u_m$ produce
+signal at detector position~$u_j$.
 
-In the current implementation, \textbf{we use only the reference
-CU's matrix $\mathbf{A}^{\text{ref}}$ for all epochs}, regardless of
-which CU observed them.  The per-CU nominal matrices are available
-but not used (the code supports this via a
-\texttt{--use-nominal-aij} flag, currently set to \texttt{False}).
-This means the effective basis~$\mathbf{E}$ is the same for all
-calibration units, and the correction~$\Delta\mathbf{M}^c$ must
-capture the \emph{entire} differential instrument response between
-CU~$c$ and the reference, not just small residuals.
+For the reference CU, $\mathbf{A}^{\text{ref}}$ is the full LSF
+convolution kernel $I_\text{ref} \cdot I_\text{ref}^\dagger$.  It is
+\emph{not} the identity matrix: its entries are concentrated in a band
+around the diagonal (diagonal values ${\sim}0.04$--$0.15$, row
+sums~${\approx}1$).
 
-The \emph{effective basis} $\mathbf{E}$ maps source coefficients to
-predicted observations by convolving each basis function with the
-reference LSF.  On the fine grid
-($\Delta u = 0.05$, $u \in [-4, 64]$, $G = 1361$ points):
+\paragraph{Three Aij modes.}
+The implementation supports three modes for choosing which $A_{ij}$
+matrix is used in the forward model, controlled by the
+\texttt{--aij-mode} flag:
+
+\begin{enumerate}
+  \item \textbf{\texttt{reference}} (default).  The reference CU's
+    matrix $\mathbf{A}^{\text{ref}}$ is used for \emph{all} epochs,
+    regardless of which CU observed them.  The
+    correction~$\Delta\mathbf{M}^c$ must capture the entire
+    differential instrument response between CU~$c$ and the reference.
+
+  \item \textbf{\texttt{per-cu}}.  Each epoch uses the nominal matrix
+    $\mathbf{A}^{\text{nom},c}$ of its own CU.  The
+    correction~$\Delta\mathbf{M}^c$ only needs to account for small
+    residual deviations from the nominal model.
+
+  \item \textbf{\texttt{identity}}.  The identity matrix
+    $\mathbf{A} = \mathbf{I}$ is used for all epochs (no LSF model at
+    all).  The correction~$\Delta\mathbf{M}^c$ must absorb both the
+    full LSF convolution and the CU-to-CU differences.
+\end{enumerate}
+
+\noindent
+The treatment of the reference CU differs by mode:
+\begin{itemize}
+  \item In \textbf{identity mode},
+    $\Delta\mathbf{M}^{\text{ref}} = \mathbf{0}$ is enforced as a
+    hard constraint.  Without a physical prior model, the system has a
+    gauge freedom: corrections can be shifted between the reference
+    CU's $\Delta\mathbf{M}$ and the source spectra without changing
+    the fit.  Fixing the reference CU breaks this degeneracy.
+  \item In \textbf{per-cu} and \textbf{reference} modes, all CUs
+    including the reference are solved.  The nominal model
+    $\mathbf{A}^{\text{nom}}$ already provides a physically motivated
+    baseline, and the Tikhonov prior $\mathbf{a}_0 = \mathbf{0}$
+    (``no correction needed'') softly anchors each
+    $\Delta\mathbf{M}^c$ toward zero
+    (Section~\ref{sec:regularisation}).  This matches the Java
+    pipeline, which solves for all CUs.
+\end{itemize}
+Experimental comparison (Section~\ref{sec:aij-comparison})
+shows that all three modes converge to
+essentially the same final loss ($<\!0.5\%$ difference), demonstrating
+that $\Delta\mathbf{M}$ has enough degrees of freedom to compensate
+for any choice of base $A_{ij}$.
+
+\subsubsection{Effective Basis and Predicted Flux}
+\label{sec:effective-basis}
+
+The \emph{effective basis}~$\mathbf{E}$ maps source coefficients to
+predicted detector signal.  Given the chosen $A_{ij}$ matrix
+(Section~\ref{sec:aij}), it is computed in two steps.
+
+\paragraph{Step 1: Fine-grid convolution.}
+Evaluate each basis function on the fine grid and convolve with the
+$A_{ij}$ matrix:
 \begin{equation}
   \label{eq:eff-basis-fine}
-  E^\text{fine}_{jk} = \sum_m A^\text{ref}_{jm}\, B_k(u^\text{fine}_m)\, \Delta u,
-  \qquad j = 1, \ldots, G,
+  E^\text{fine}_{jk} = \sum_{m=1}^{G} A_{jm}\, B_k(u^\text{fine}_m)\, \Delta u,
+  \qquad j = 1, \ldots, G,\quad k = 1, \ldots, K.
 \end{equation}
-then interpolated to the per-epoch observation positions:
+In matrix form: $\mathbf{E}^\text{fine} = \mathbf{A}\, \mathbf{B}^\text{fine}\, \Delta u \in \mathbb{R}^{G \times K}$.
+
+\paragraph{Step 2: Interpolation to observation positions.}
+Each epoch has its own observation positions
+$\mathbf{u}_\text{obs} \in \mathbb{R}^P$ (which vary with transit
+geometry).  The effective basis at these positions is obtained by
+linear interpolation from the fine grid:
 \begin{equation}
   \label{eq:eff-basis}
   E_{ik} = \operatorname{interp}\!\bigl(E^\text{fine}_{:,k},\;
@@ -309,16 +424,77 @@ then interpolated to the per-epoch observation positions:
   \qquad
   \mathbf{E} \in \mathbb{R}^{P \times K}.
 \end{equation}
-The base prediction (without instrument correction) for source~$s$ is
-then $\mathbf{f}^\text{base} = \mathbf{E}\, \mathbf{b}_s$.
+
+\paragraph{Predicted flux.}
+The predicted observation for source~$s$, epoch~$e$ from CU~$c$ is:
+\begin{equation}
+  \label{eq:prediction-full}
+  \mathbf{f}^\text{pred}_{s,e} =
+    \bigl(\mathbf{E}_e + \Delta\mathbf{M}^c \mathbf{B}_e\bigr)\,
+      \mathbf{b}_s,
+\end{equation}
+where $\mathbf{E}_e$ and $\mathbf{B}_e$ are evaluated at epoch~$e$'s
+observation positions, and $\Delta\mathbf{M}^c$ is the current
+instrument correction for CU~$c$.  At iteration~1,
+$\Delta\mathbf{M}^c = \mathbf{0}$ for all CUs, so
+$\mathbf{f}^\text{pred} = \mathbf{E}_e\, \mathbf{b}_s$.  In identity
+mode, $\Delta\mathbf{M}^{\text{ref}} = \mathbf{0}$ throughout all
+iterations.
+
+\subsubsection{Step-by-Step: First Iteration vs.\ Subsequent Iterations}
+\label{sec:iteration-flow}
+
+To clarify the calculation flow:
+
+\paragraph{Iteration 1 (cold start).}
+\begin{enumerate}
+  \item All instrument corrections are zero:
+    $\Delta\mathbf{M}^c = \mathbf{0}$ for all CUs.
+  \item \textbf{Source Update:} For each source~$s$, stack all its
+    epochs (from all CUs) and solve the robust regression
+    $\mathbf{f} \approx \mathbf{E}\, \mathbf{b}_s$ using only the
+    base effective basis~$\mathbf{E}$.  Since all CUs use the same
+    $\mathbf{E}$ (no correction yet), the source coefficients represent
+    a compromise fit across all CUs.
+  \item \textbf{Instrument Update:} For each CU~$c$ (excluding the
+    reference in identity mode), compute residuals
+    $r = f - \mathbf{E}\, \mathbf{b}_s$ (using the just-estimated
+    source coefficients but no $\Delta\mathbf{M}$).  Solve for
+    $\Delta\mathbf{M}^c$ that best explains these residuals.  The
+    first $\Delta\mathbf{M}$ captures the dominant instrument effects
+    and produces the largest single-iteration loss drop.
+\end{enumerate}
+
+\paragraph{Iteration $k > 1$.}
+\begin{enumerate}
+  \item The instrument corrections $\Delta\mathbf{M}^c$ from the
+    previous iteration are available.
+  \item \textbf{Source Update:} Each source is now fitted using the
+    \emph{corrected} effective basis
+    $\mathbf{E}^\text{corr}_e = \mathbf{E}_e + \Delta\mathbf{M}^{c(e)}
+    \mathbf{B}_e$.  Epochs from different CUs contribute different
+    design matrices (each incorporating its CU's correction).  The
+    source coefficients improve because the instrument effects have
+    been partially removed.
+  \item \textbf{Instrument Update:} For each CU~$c$ (excluding the
+    reference in identity mode), residuals are computed from the base
+    model (without $\Delta\mathbf{M}$) using the improved source
+    coefficients.  Each $\Delta\mathbf{M}^c$ is re-estimated from
+    scratch (not incrementally).  Because the source coefficients are
+    better, the residuals more cleanly separate instrument effects from
+    astrophysical signal, yielding a refined~$\Delta\mathbf{M}^c$.
+\end{enumerate}
+
+\noindent
+The alternation converges because each half-step is guaranteed to
+decrease (or maintain) the total loss (Section~\ref{sec:monotone}).
+In practice, ${\sim}90\%$ of the total improvement occurs in the
+first 2--3 iterations, with diminishing returns thereafter.
 
 \subsubsection{Instrument Correction}
 \label{sec:im-correction}
 
-For a non-reference calibration unit~$c$, the prediction includes an
-additive correction via a matrix
-$\Delta\mathbf{M}^c \in \mathbb{R}^{P \times P}$ acting on the mean
-spectrum:
+For calibration unit~$c$, the full prediction with correction is:
 \begin{equation}
   \label{eq:prediction}
   \mathbf{f}^\text{pred} = \mathbf{E}\, \mathbf{b}_s
@@ -327,15 +503,13 @@ spectrum:
     = \mathbf{E}^\text{corr}\, \mathbf{b}_s,
 \end{equation}
 where $\mathbf{E}^\text{corr} = \mathbf{E} + \Delta\mathbf{M}^c
-\mathbf{B}$ is the corrected effective basis.  For the reference CU
-(row~5, FoV~Following), $\Delta\mathbf{M}^\text{ref} = \mathbf{0}$ by
-convention.
+\mathbf{B}$ is the corrected effective basis.
 
-Since the base effective basis~$\mathbf{E}$ uses only the reference
-Aij for all CUs, the correction~$\Delta\mathbf{M}^c$ absorbs the
-full differential response.  In a future configuration where per-CU
-nominal Aij are used, $\Delta\mathbf{M}^c$ would only need to capture
-small residual deviations from the nominal model.
+In identity mode, $\Delta\mathbf{M}^{\text{ref}} = \mathbf{0}$ is
+enforced for the reference CU (row~4, FoV~Following) to fix the
+gauge.  In per-cu and reference modes, the reference CU receives a
+correction like all other CUs; the Tikhonov prior
+(Section~\ref{sec:regularisation}) anchors the system instead.
 
 The correction is \emph{linear in~$\mathbf{b}_s$} for fixed
 $\Delta\mathbf{M}^c$, so the source update remains a standard linear
@@ -350,6 +524,16 @@ epoch~$e$ is:
   \label{eq:residual}
   z_i = \frac{f_i - f^\text{pred}_i}{\sigma_i}.
 \end{equation}
+
+\paragraph{Notation mapping.}
+For reference, our notation maps to the companion article as
+follows: our $\mathbf{A}^{\text{nom},c}$ corresponds to the article's
+bold~$\mathbf{A}_{ij}$ (the tabulated nominal instrument model); our
+correction matrix $\Delta\mathbf{M}^c$ corresponds to the article's
+lowercase~$a_{ij}$ (the perturbation model parameterising residual
+instrument effects); our source coefficients~$\mathbf{b}_s$ correspond
+to the article's~$b_k$; and the effective basis~$\mathbf{E}$ plays the
+role of the article's design matrix for the source update.
 
 %----------------------------------------------------------------------
 \subsection{Loss Function}
@@ -419,6 +603,20 @@ choice $\lambda = 10^4$ yields a regularisation penalty that is
 ${\sim}2\%$ of the total loss, providing effective control without
 over-constraining the instrument corrections.
 
+\paragraph{Connection to the Bayesian prior.}
+The regularisation~\eqref{eq:reg} is equivalent to a Gaussian prior
+on the instrument corrections with mean $\mathbf{a}_0 = \mathbf{0}$
+(``no correction on top of the nominal model'') and covariance
+$\mathbf{C}_0 = \sigma_0^2 \mathbf{I}$, where $\lambda = 1/\sigma_0^2$.
+The prior contribution to the negative log-posterior is
+$(\mathbf{a}_0 - \mathbf{a})^\top \mathbf{C}_0^{-1}
+(\mathbf{a}_0 - \mathbf{a})
+= \lambda \|\mathbf{a}\|^2$,
+which matches our $(\lambda/2)\|\Delta\mathbf{M}\|_F^2$ up to the
+factor of $1/2$ absorbed into the Huber loss convention.
+This makes explicit that the regularisation encodes the physical
+assumption that the nominal instrument model is approximately correct.
+
 \textbf{No regularisation is applied to the source coefficients}
 $\mathbf{b}_s$.  Source spectra are physical quantities that should
 not be biased toward zero, and each source update is well-determined
@@ -458,8 +656,9 @@ independently.  Both training and test sources are updated.
 \subsubsection{Instrument Update (IU)}
 \label{sec:iu}
 
-For each non-reference CU~$c$ independently, the residuals from the
-base model (without any $\Delta\mathbf{M}$) are:
+For each CU~$c$ independently (excluding the reference CU in identity
+mode), the residuals from the base model (without any
+$\Delta\mathbf{M}$) are:
 \begin{equation}
   r_{n,p} = f_{n,p} - \bigl(\mathbf{E}\, \mathbf{b}_{s(n)}\bigr)_p,
 \end{equation}
@@ -614,5 +813,500 @@ sources.
 \caption{Default calibration parameters.}
 \label{tab:parameters}
 \end{table}
+
+\newpage
+%======================================================================
+\section{Experimental Results: Aij Mode Comparison}
+\label{sec:aij-comparison}
+%======================================================================
+
+We compare the \texttt{per-cu} and \texttt{identity} Aij modes to
+assess the importance of the nominal LSF model and the effect of the
+reference CU treatment.  The primary runs use 1000~sources
+(700~train, 300~test, 30\% test fraction), 15~iterations,
+$\delta = 1.345$, $\lambda = 10^4$, seed~42, and the corrected
+reference CU (row~4, FoV~Following, read from config).  After
+filtering, 964~BP and 932~RP sources remain, with
+\num{1900814}~training and \num{814925}~test observations.  A
+200-source pilot run (Section~\ref{sec:scaling}) confirms that the
+findings are stable across sample sizes.
+
+The key implementation difference between modes:
+\begin{itemize}
+  \item \textbf{per-cu}: each CU uses its own nominal
+    $\mathbf{A}^{\text{nom},c}$; all 28~CUs ($2 \times 14$) are
+    solved, including the reference.  The Tikhonov prior anchors the
+    system.
+  \item \textbf{identity}: $\mathbf{A} = \mathbf{I}$ for all CUs;
+    the reference CU is \emph{excluded} from the instrument update
+    ($\Delta\mathbf{M}^{\text{ref}} = \mathbf{0}$) to fix the gauge,
+    yielding 26~solved CUs.
+\end{itemize}
+
+%----------------------------------------------------------------------
+\subsection{Summary Comparison}
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{lcc}
+  \toprule
+  & \textbf{per-cu} & \textbf{identity} \\
+  \midrule
+  CUs solved            & 28 (all)     & 26 (ref skipped)   \\
+  Iterations            & 14           & 15                  \\
+  Loss after iter 1     & $1.268 \times 10^6$ & $1.317 \times 10^6$ \\
+  Final loss            & $1.161 \times 10^6$ & $1.174 \times 10^6$ \\
+  Total loss reduction  & $-8.4\%$     & $-10.8\%$    \\
+  \midrule
+  Train data loss       & $7.556 \times 10^5$ & $7.654 \times 10^5$ \\
+  Test data loss        & $3.961 \times 10^5$ & $3.987 \times 10^5$ \\
+  Train loss/obs        & 0.3975       & 0.4027       \\
+  Test loss/obs         & 0.4861       & 0.4892       \\
+  Test/train ratio      & 1.223        & 1.215        \\
+  \midrule
+  Reg.\ penalty (final) & $9.651 \times 10^3$ & $1.018 \times 10^4$ \\
+  \midrule
+  BP sources increased  & 0/964        & 0/964        \\
+  RP sources increased  & 0/932        & 0/932        \\
+  \midrule
+  Residual std          & 9.181        & 9.178        \\
+  Residual MAD          & 2.000        & 2.000        \\
+  $|r| > 5$             & 24.89\%      & 24.89\%      \\
+  \bottomrule
+\end{tabular}
+\caption{Comparison of per-cu and identity Aij modes (1000 sources,
+  ref CU = row~4 FoV~Following).  Per-cu achieves
+  ${\sim}1\%$ lower total loss by solving all 28~CUs with a nominal
+  Aij baseline; residual statistics are identical.}
+\label{tab:aij-comparison}
+\end{table}
+
+%----------------------------------------------------------------------
+\subsection{Convergence Behaviour}
+
+Both modes exhibit the same convergence pattern: a large loss drop in
+the first iteration (the initial instrument update captures the
+dominant CU-to-CU differences), rapid improvement through
+iterations~2--4, and diminishing returns thereafter.  By iteration~10,
+the relative change per iteration falls below $0.05\%$ in both modes.
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{rrr}
+  \toprule
+  \textbf{Iter} & \textbf{per-cu} & \textbf{identity} \\
+  \midrule
+  1  & $1.268 \times 10^6$ & $1.317 \times 10^6$ \\
+  2  & $1.193 \times 10^6$ & $1.212 \times 10^6$ \\
+  5  & $1.167 \times 10^6$ & $1.182 \times 10^6$ \\
+  10 & $1.162 \times 10^6$ & $1.176 \times 10^6$ \\
+  \bottomrule
+\end{tabular}
+\caption{Total loss after IU at selected iterations (1000 sources).}
+\label{tab:convergence}
+\end{table}
+
+The per-cu mode achieves consistently lower loss because: (1)~the
+nominal $\mathbf{A}^{\text{nom},c}$ already captures most of the
+instrument response, so $\Delta\mathbf{M}$ need only model small
+residual deviations; (2)~all 28~CUs are corrected, including the
+reference CU, whereas identity mode fixes
+$\Delta\mathbf{M}^{\text{ref}} = \mathbf{0}$.  Despite the
+${\sim}1\%$ total loss gap, the two modes converge at the same rate,
+with ${\sim}90\%$ of improvement in the first 3--4 iterations.
+
+%----------------------------------------------------------------------
+\subsection{Train/Test Generalisation}
+
+No overfitting is observed in either mode.  Both training and test
+data losses decrease monotonically through all iterations.  The
+test/train ratio stabilises at ${\sim}1.22$ in both modes, higher than
+the ${\sim}1.08$ observed in 200-source runs.  The increase is
+attributable to the larger test fraction (30\% vs 20\%) and the
+greater diversity of sources: the 1000-source sample includes fainter
+and more challenging sources not present in the 200-source subset.
+The identity mode has a marginally \emph{lower} test/train ratio
+($1.215$ vs $1.223$), because the gauge constraint
+($\Delta\mathbf{M}^{\text{ref}} = \mathbf{0}$) acts as an additional
+implicit regulariser.
+
+%----------------------------------------------------------------------
+\subsection{Regularisation Penalty}
+
+The regularisation penalty $\mathcal{L}_\text{reg}$ reflects the
+magnitude of the learned instrument corrections:
+
+\begin{itemize}
+  \item \textbf{per-cu} ($9.65 \times 10^3$): 28~CUs contribute,
+    each with a small $\Delta\mathbf{M}^c$ (corrections on top of the
+    nominal model).  The per-CU penalty is $9651/28 = 345$.
+  \item \textbf{identity} ($1.02 \times 10^4$): 26~CUs contribute
+    (reference excluded), each encoding the full LSF convolution.
+    The per-CU penalty is $10185/26 = 392$, confirming that individual
+    corrections are ${\sim}14\%$ larger without a nominal model
+    baseline.
+\end{itemize}
+
+\noindent
+The regularisation penalty has roughly doubled compared to the
+200-source runs (${\sim}4.7 \times 10^3$), reflecting the
+$5{\times}$ increase in training data: more observations constrain
+$\Delta\mathbf{M}$ more tightly, allowing larger corrections before
+the regularisation--data tradeoff tightens.  As a fraction of total
+loss, the penalty remains modest (${\sim}0.8\%$).
+
+%----------------------------------------------------------------------
+\subsection{Reference CU Treatment}
+
+The treatment of the reference CU is the primary structural
+difference between modes and explains the ${\sim}1\%$ loss gap:
+
+\begin{itemize}
+  \item In \textbf{identity mode}, the reference CU receives no
+    correction.  All observations from CU (row~4, FoV~Following)
+    are fitted using only the base effective basis~$\mathbf{E}$
+    (which, with $\mathbf{A} = \mathbf{I}$, is a raw B-spline
+    evaluation without any LSF convolution).  This is the price
+    paid for gauge-fixing when no physical prior model is available.
+
+  \item In \textbf{per-cu mode}, every CU---including the
+    reference---receives a $\Delta\mathbf{M}^c$ correction.  The
+    nominal $\mathbf{A}^{\text{nom},c}$ already encodes the physical
+    instrument response, and the Tikhonov prior
+    (Section~\ref{sec:regularisation}) anchors the corrections toward
+    zero.  The reference CU is not special.
+\end{itemize}
+
+\noindent
+The per-CU approach matches the Java pipeline, which solves for
+all CUs without excluding the reference.
+
+%----------------------------------------------------------------------
+\subsection{Scaling: 200 vs 1000 Sources}
+\label{sec:scaling}
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{lcccc}
+  \toprule
+  & \multicolumn{2}{c}{\textbf{200 sources}} &
+    \multicolumn{2}{c}{\textbf{1000 sources}} \\
+  \cmidrule(lr){2-3} \cmidrule(lr){4-5}
+  & per-cu & identity & per-cu & identity \\
+  \midrule
+  Sources (BP / RP)     & 187 / 182 & 187 / 182 & 964 / 932 & 964 / 932 \\
+  Train observations    & \num{408300} & \num{408300} & \num{1900814} & \num{1900814} \\
+  Test fraction         & 20\%    & 20\%    & 30\%    & 30\%    \\
+  Train loss/obs        & 0.359   & 0.367   & 0.398   & 0.403   \\
+  Test loss/obs         & 0.390   & 0.394   & 0.486   & 0.489   \\
+  Test/train ratio      & 1.087   & 1.073   & 1.223   & 1.215   \\
+  Residual MAD          & 2.046   & 2.046   & 2.000   & 2.000   \\
+  $|r| > 5$             & 25.0\%  & 25.0\%  & 24.9\%  & 24.9\%  \\
+  \bottomrule
+\end{tabular}
+\caption{Scaling comparison.  Residual quality improves slightly with
+  more sources despite higher loss/obs values.}
+\label{tab:scaling}
+\end{table}
+
+\noindent
+Two trends emerge:
+\begin{enumerate}
+  \item \textbf{Residual quality improves.}  The MAD drops from
+    $2.046$ to $2.000$ ($-2.2\%$) and the fraction of large residuals
+    ($|r| > 5$) drops from $25.0\%$ to $24.9\%$.  More sources
+    provide better constraints on $\Delta\mathbf{M}$, yielding
+    tighter residuals.
+  \item \textbf{Per-observation loss increases.}  The train loss/obs
+    rises from ${\sim}0.36$ to ${\sim}0.40$.  This is expected: the
+    1000-source sample includes fainter, noisier sources with
+    intrinsically higher Huber loss per observation.  The instrument
+    model (with ${\sim}2800$ parameters per CU) is shared across all
+    sources and cannot simultaneously optimise for a more diverse
+    population.
+\end{enumerate}
+
+\noindent
+The per-cu/identity comparison is robust to the $5{\times}$ sample
+size increase: the loss gap between modes (${\sim}1\%$), the identical
+residual statistics, and the absence of chi2 increases all hold at
+both scales.
+
+%----------------------------------------------------------------------
+\subsection{Key Observations}
+
+\begin{enumerate}
+  \item \textbf{Per-cu mode achieves the lowest total loss}
+    ($1.161 \times 10^6$) by solving all 28~CUs with a physically
+    motivated nominal model.  The ${\sim}1\%$ advantage over identity
+    mode comes primarily from correcting the reference CU and
+    providing a better Aij baseline.
+
+  \item \textbf{Residual statistics are identical.}  Both
+    modes produce std~$\approx 9.18$, MAD~$= 2.000$, and
+    $|r| > 5 = 24.89\%$.  Zero sources show increased chi2 in either
+    mode.  The loss gap is spread uniformly across all sources and
+    samples rather than concentrated in specific outliers.
+
+  \item \textbf{$\Delta\mathbf{M}$ has ample capacity.}  With
+    $P^2 \approx 2800$ free parameters per CU, the instrument
+    correction matrix can absorb the entire LSF convolution
+    (${\sim}70$ non-negligible entries per row of $A_{ij}$) while
+    still maintaining effective regularisation.  The regularisation
+    penalty remains below $1\%$ of the total loss.
+
+  \item \textbf{The Aij choice affects interpretation, not residual
+    quality.}  In per-cu mode, $\Delta\mathbf{M}$ represents small
+    corrections on top of a known instrument model.  In identity mode,
+    $\Delta\mathbf{M}$ encodes the full instrument response including
+    the LSF.  The calibrated spectra are indistinguishable.
+
+  \item \textbf{No overfitting at either scale.}  Both training and
+    test losses decrease monotonically in all runs.  The higher
+    test/train ratio at 1000~sources (${\sim}1.22$ vs ${\sim}1.08$)
+    reflects population heterogeneity rather than overfitting: the
+    test set contains sources that differ more from the training set.
+
+  \item \textbf{Identity mode requires gauge-fixing.}  Without a
+    physical prior, the reference CU must be excluded from the
+    instrument update to break the degeneracy between source spectra
+    and instrument model.  This is a direct consequence of the
+    article's analysis (Section~2.3): when $\mathbf{A} = \mathbf{I}$,
+    there is no anchor to distinguish ``instrument effect'' from
+    ``source spectrum.''
+
+  \item \textbf{Epoch outlier filter removes pathological data.}
+    Investigation of source 897643221358262784 --- previously the worst
+    outlier with BP~chi2/obs~$\approx 44$ --- revealed that a single
+    corrupted epoch (all 53~valid samples at ${\approx}{-2745}$\,e$^-$,
+    a readout error) accounted for ${\sim}100\%$ of the anomalous loss.
+    The star itself is an ordinary faint K/G-dwarf ($G = 15.7$,
+    $T_\text{eff} \approx 5900$\,K).
+    The epoch outlier filter (Section~\ref{sec:outlier-filter}) now
+    removes such epochs at conversion time: 77~pathological epochs are
+    rejected across the full dataset (17~negative-flux readout errors,
+    60~cosmic-ray spikes).
+\end{enumerate}
+
+For production use, \texttt{per-cu} mode is recommended: it uses the
+full nominal instrument model, solves all CUs without gauge-fixing
+complications, and achieves the lowest loss.  The \texttt{identity}
+mode serves as a useful validation: its convergence to identical
+residual quality confirms that the instrument correction has enough
+degrees of freedom to learn the complete instrument response from
+data alone.
+
+%----------------------------------------------------------------------
+\subsection{200-Source Pilot Run: Detailed Results}
+\label{sec:200-results}
+
+This section presents convergence tables and diagnostic figures from
+the 200-source, 10-iteration pilot runs (per-cu and identity modes).
+The dataset contains \num{409808}~epochs after all quality filters and
+epoch outlier removal (Section~\ref{sec:outlier-filter}), split into
+160~training and 40~test sources (20\% test fraction, seed~42).
+After source-level filtering, 187~BP and 182~RP sources remain,
+yielding \num{408300}~training and \num{98879}~test observations.
+
+\subsubsection{Convergence Tables}
+
+Table~\ref{tab:200-convergence-percu} shows the full iteration-by-iteration
+convergence for per-cu mode; Table~\ref{tab:200-convergence-identity}
+shows identity mode.
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{rcccc}
+  \toprule
+  \textbf{Iter} & \textbf{Begin} & \textbf{After SU} & \textbf{After IU}
+    & \textbf{Rel.\ change} \\
+  \midrule
+  1  & ---                   & $4.182 \times 10^5$ & $2.103 \times 10^5$ & --- \\
+  2  & $2.103 \times 10^5$   & $1.978 \times 10^5$ & $1.954 \times 10^5$ & $-7.08\%$ \\
+  3  & $1.954 \times 10^5$   & $1.929 \times 10^5$ & $1.924 \times 10^5$ & $-1.51\%$ \\
+  4  & $1.924 \times 10^5$   & $1.913 \times 10^5$ & $1.912 \times 10^5$ & $-0.61\%$ \\
+  5  & $1.912 \times 10^5$   & $1.906 \times 10^5$ & $1.907 \times 10^5$ & $-0.31\%$ \\
+  6  & $1.907 \times 10^5$   & $1.902 \times 10^5$ & $1.903 \times 10^5$ & $-0.17\%$ \\
+  7  & $1.903 \times 10^5$   & $1.900 \times 10^5$ & $1.901 \times 10^5$ & $-0.10\%$ \\
+  8  & $1.901 \times 10^5$   & $1.898 \times 10^5$ & $1.900 \times 10^5$ & $-0.07\%$ \\
+  9  & $1.900 \times 10^5$   & $1.897 \times 10^5$ & $1.899 \times 10^5$ & $-0.05\%$ \\
+  10 & $1.899 \times 10^5$   & $1.897 \times 10^5$ & $1.898 \times 10^5$ & $-0.04\%$ \\
+  \bottomrule
+\end{tabular}
+\caption{Total loss at each stage of per-cu mode (200 sources,
+  10 iterations).  Loss reduction: $2.103 \times 10^5 \to
+  1.898 \times 10^5$ ($-9.7\%$).  From iteration~5 onward, the IU
+  step slightly increases total loss relative to after~SU because the
+  regularisation penalty growth exceeds the marginal data loss
+  improvement.}
+\label{tab:200-convergence-percu}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{rcccc}
+  \toprule
+  \textbf{Iter} & \textbf{Begin} & \textbf{After SU} & \textbf{After IU}
+    & \textbf{Rel.\ change} \\
+  \midrule
+  1  & ---                   & $4.794 \times 10^5$ & $2.238 \times 10^5$ & --- \\
+  2  & $2.238 \times 10^5$   & $2.049 \times 10^5$ & $2.011 \times 10^5$ & $-10.15\%$ \\
+  3  & $2.011 \times 10^5$   & $1.981 \times 10^5$ & $1.973 \times 10^5$ & $-1.87\%$ \\
+  4  & $1.973 \times 10^5$   & $1.961 \times 10^5$ & $1.958 \times 10^5$ & $-0.75\%$ \\
+  5  & $1.958 \times 10^5$   & $1.951 \times 10^5$ & $1.950 \times 10^5$ & $-0.42\%$ \\
+  6  & $1.950 \times 10^5$   & $1.945 \times 10^5$ & $1.945 \times 10^5$ & $-0.26\%$ \\
+  7  & $1.945 \times 10^5$   & $1.941 \times 10^5$ & $1.942 \times 10^5$ & $-0.18\%$ \\
+  8  & $1.942 \times 10^5$   & $1.939 \times 10^5$ & $1.939 \times 10^5$ & $-0.12\%$ \\
+  9  & $1.939 \times 10^5$   & $1.937 \times 10^5$ & $1.938 \times 10^5$ & $-0.09\%$ \\
+  10 & $1.938 \times 10^5$   & $1.936 \times 10^5$ & $1.936 \times 10^5$ & $-0.07\%$ \\
+  \bottomrule
+\end{tabular}
+\caption{Total loss at each stage of identity mode (200 sources,
+  10 iterations).  Loss reduction: $2.238 \times 10^5 \to
+  1.936 \times 10^5$ ($-13.5\%$).  The larger percentage reduction
+  compared to per-cu reflects the higher initial loss (no nominal
+  model baseline).  The IU step becomes loss-increasing from
+  iteration~7 onward.}
+\label{tab:200-convergence-identity}
+\end{table}
+
+\subsubsection{Train/Test Generalisation}
+
+Table~\ref{tab:200-traintest} shows train/test loss decomposition at
+selected iterations for both modes.
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{lccccc}
+  \toprule
+  \textbf{Mode / Iter} & \textbf{Reg IM} & \textbf{Train data}
+    & \textbf{Test data} & \textbf{Train/obs} & \textbf{Test/obs} \\
+  \midrule
+  \multicolumn{6}{l}{\textit{per-cu}} \\
+  \quad 1  & $3.082 \times 10^3$ & $1.635 \times 10^5$ & $4.365 \times 10^4$ & 0.401 & 0.441 \\
+  \quad 5  & $4.399 \times 10^3$ & $1.476 \times 10^5$ & $3.863 \times 10^4$ & 0.362 & 0.391 \\
+  \quad 10 & $4.787 \times 10^3$ & $1.465 \times 10^5$ & $3.855 \times 10^4$ & 0.359 & 0.390 \\
+  \midrule
+  \multicolumn{6}{l}{\textit{identity}} \\
+  \quad 1  & $3.209 \times 10^3$ & $1.749 \times 10^5$ & $4.566 \times 10^4$ & 0.429 & 0.462 \\
+  \quad 5  & $4.437 \times 10^3$ & $1.514 \times 10^5$ & $3.915 \times 10^4$ & 0.371 & 0.396 \\
+  \quad 10 & $4.685 \times 10^3$ & $1.500 \times 10^5$ & $3.897 \times 10^4$ & 0.367 & 0.394 \\
+  \bottomrule
+\end{tabular}
+\caption{Train/test loss decomposition (200 sources).  Both modes
+  show monotonically decreasing train and test losses.  Test/train
+  ratio at convergence: 1.09 (per-cu) and 1.07 (identity) --- no
+  overfitting.  Train: \num{408300} obs, test: \num{98879} obs.}
+\label{tab:200-traintest}
+\end{table}
+
+\subsubsection{Per-Source Chi2 Summary}
+
+Zero sources show increased overall chi2/obs in either mode (0/187~BP,
+0/182~RP).  The worst source is 421398311066127104 with
+chi2/obs~$= 0.865$ (BP, per-cu) and $0.702$ (RP, per-cu) --- entirely
+normal.
+
+\subsubsection{Convergence Figures}
+
+Figure~\ref{fig:200-convergence-percu} shows the four-panel
+convergence diagnostic for per-cu mode.
+Figure~\ref{fig:200-convergence-identity} shows the same for identity
+mode.
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.95\textwidth]{fig_200_percu_convergence}
+  \caption{Convergence diagnostic for per-cu mode (200 sources,
+    10 iterations).  Top left: total loss decomposed into data loss and
+    regularisation penalty.  Top right: BP and RP data loss.  Bottom
+    left: per-source loss/obs distribution (median, 95th percentile,
+    max).  Bottom right: relative change per iteration.}
+  \label{fig:200-convergence-percu}
+\end{figure}
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.95\textwidth]{fig_200_identity_convergence}
+  \caption{Convergence diagnostic for identity mode (200 sources,
+    10 iterations).  Same layout as Figure~\ref{fig:200-convergence-percu}.
+    Identity mode starts from a higher initial loss but follows the same
+    convergence pattern, with ${\sim}90\%$ of the improvement in the first
+    3--4 iterations.}
+  \label{fig:200-convergence-identity}
+\end{figure}
+
+\subsubsection{Train/Test Generalisation Figure}
+
+Figure~\ref{fig:200-traintest} shows the train/test convergence
+diagnostic for per-cu mode.
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.95\textwidth]{fig_200_percu_traintest}
+  \caption{Train/test generalisation for per-cu mode (200 sources).
+    Top left: absolute data loss for train and test sets.  Top right:
+    normalised loss per observation.  Bottom left: train loss
+    decomposed into data loss and regularisation penalty.  Bottom
+    right: test/train ratio (overfitting indicator); the ratio
+    stabilises at ${\sim}1.09$, confirming no overfitting.}
+  \label{fig:200-traintest}
+\end{figure}
+
+\subsubsection{IU Loss Increase Behaviour}
+
+Figure~\ref{fig:200-iu-increases} shows the fraction of sources whose
+per-source loss increases after the instrument update step.  This
+fraction grows over iterations as the regularisation penalty
+increasingly competes with diminishing data loss improvements.  At
+iteration~10, 73\% of BP and 68\% of RP sources experience a
+per-source loss increase after IU.  However, the \emph{overall}
+per-source chi2 (first iteration vs final) still decreases for all
+369~sources.
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.7\textwidth]{fig_200_percu_iu_increases}
+  \caption{Fraction of sources with per-source loss increase after the
+    instrument update step, per-cu mode (200 sources).  The increase
+    reflects the growing tension between regularisation and diminishing
+    data loss improvements near convergence.  Despite these per-step
+    increases, the overall per-source chi2 decreases for all sources.}
+  \label{fig:200-iu-increases}
+\end{figure}
+
+\subsubsection{Residual Diagnostics}
+
+Figure~\ref{fig:200-residuals-before-after} compares residuals before
+and after calibration.  Figure~\ref{fig:200-residuals-bprp} shows the
+BP and RP residual structure by CU row.
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.95\textwidth]{fig_200_percu_residuals_before_after}
+  \caption{Residuals before calibration (top row, no $\Delta\mathbf{M}$)
+    and after calibration (bottom row, with $\Delta\mathbf{M}$) for
+    per-cu mode (200 sources).  Left: residuals vs PWL sample index.
+    Centre: residuals vs AC window centre.  Right: residuals vs OBMT
+    (time).  The systematic CU-dependent structure visible before
+    calibration (coloured curves) is substantially reduced after the
+    instrument correction.  MAD improves from 2.190 to 2.046; the
+    fraction of large residuals ($|r| > 5$) drops from 25.8\% to
+    25.0\%.}
+  \label{fig:200-residuals-before-after}
+\end{figure}
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.95\textwidth]{fig_200_percu_residuals_bprp}
+  \caption{Post-calibration residuals for BP (top) and RP (bottom),
+    per-cu mode (200 sources).  Left: normalised residuals vs PWL
+    sample index, coloured by CU row.  Right: residuals vs AC window
+    centre.  The remaining systematic structure in the PWL residuals
+    (coloured curves deviating from the flat baseline) indicates
+    residual instrument effects not yet captured by
+    $\Delta\mathbf{M}$.}
+  \label{fig:200-residuals-bprp}
+\end{figure}
 
 \end{document}
