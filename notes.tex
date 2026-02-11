@@ -1309,4 +1309,51 @@ BP and RP residual structure by CU row.
   \label{fig:200-residuals-bprp}
 \end{figure}
 
+\subsubsection{Individual Source Example}
+
+Figures~\ref{fig:200-source-percu} and~\ref{fig:200-source-identity}
+show the calibration result for a single well-observed source
+(283613187526576896, 49~BP epochs, 46~RP epochs) in per-cu and
+identity modes respectively.  Each figure has four rows:
+\begin{enumerate}
+  \item Observed epoch data (coloured by CCD row) and fitted mean
+    spectrum (black curve) in linear scale.
+  \item Same in log scale, highlighting CU-dependent structure in the
+    faint wings.
+  \item Raw residuals (observation $-$ model).
+  \item Normalised residuals (residual / error).
+\end{enumerate}
+
+\noindent
+The two modes produce visually indistinguishable fits for this source,
+consistent with the aggregate finding that the calibrated spectra are
+equivalent despite different Aij baselines
+(Section~\ref{sec:aij-comparison}).  The CU-dependent scatter visible
+in the log-scale panels (row~2) --- where different CCD rows produce
+slightly different observed flux levels --- is absorbed by the
+per-epoch $\Delta\mathbf{M}^c$ correction.  The normalised residuals
+(row~4) are approximately flat with no visible systematic structure.
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.95\textwidth]{fig_200_percu_source_283613187526576896}
+  \caption{Individual source 283613187526576896 --- per-cu mode.  Left
+    column: BP (49 epochs).  Right column: RP (46 epochs).  Rows from
+    top: flux (linear), flux (log), raw residuals, normalised
+    residuals.  Dots are coloured by CCD row (1--7).  The black curve
+    is the calibrated mean spectrum $\mathbf{E} \cdot \mathbf{b}$.}
+  \label{fig:200-source-percu}
+\end{figure}
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.95\textwidth]{fig_200_identity_source_283613187526576896}
+  \caption{Individual source 283613187526576896 --- identity mode.
+    Same layout as Figure~\ref{fig:200-source-percu}.  The fit is
+    visually indistinguishable from per-cu mode, confirming that the
+    $\Delta\mathbf{M}$ correction absorbs the full instrument response
+    when $\mathbf{A} = \mathbf{I}$.}
+  \label{fig:200-source-identity}
+\end{figure}
+
 \end{document}
