@@ -172,8 +172,9 @@ sufficient observations for a reliable spectral fit.
 
 Of the 60 raw samples per epoch, only those within the
 pseudo-wavelength (PWL) range $[2.0, 58.0]$ are used for
-calibration. The number of valid samples depends on the reference
-positions of each epoch, which vary with transit geometry. For the
+calibration. The number of valid samples depends on the observation
+positions (PWL positions) of each epoch, which vary with transit
+geometry. For the
 reference calibration unit:
 \begin{itemize}
   \item BP: 53 valid samples (out of 60),
@@ -391,8 +392,8 @@ The treatment of the reference CU differs by mode:
     pipeline, which solves for all CUs.
 \end{itemize}
 Experimental comparison (Section~\ref{sec:aij-comparison})
-shows that all three modes converge to
-essentially the same final loss ($<\!0.5\%$ difference), demonstrating
+shows that per-cu and identity modes converge to
+essentially the same final loss (${\sim}1\%$ difference), demonstrating
 that $\Delta\mathbf{M}$ has enough degrees of freedom to compensate
 for any choice of base $A_{ij}$.
 
@@ -454,9 +455,11 @@ To clarify the calculation flow:
   \item \textbf{Source Update:} For each source~$s$, stack all its
     epochs (from all CUs) and solve the robust regression
     $\mathbf{f} \approx \mathbf{E}\, \mathbf{b}_s$ using only the
-    base effective basis~$\mathbf{E}$.  Since all CUs use the same
-    $\mathbf{E}$ (no correction yet), the source coefficients represent
-    a compromise fit across all CUs.
+    base effective basis~$\mathbf{E}$ (no correction yet).  In per-cu
+    mode each CU already has its own $\mathbf{E}_c$ from the nominal
+    model $\mathbf{A}^{\text{nom},c}$; in identity and reference modes
+    all CUs share the same~$\mathbf{E}$.  Either way, the source
+    coefficients represent a compromise fit across all CUs.
   \item \textbf{Instrument Update:} For each CU~$c$ (excluding the
     reference in identity mode), compute residuals
     $r = f - \mathbf{E}\, \mathbf{b}_s$ (using the just-estimated
@@ -645,7 +648,8 @@ For each source $s$ independently, and for each XP type, solve:
       \Biggr),
 \end{equation}
 where $\mathbf{E}^\text{corr}_e = \mathbf{E} +
-\Delta\mathbf{M}^{c(e)} \mathbf{B}$ depends on the CU of epoch~$e$.
+\Delta\mathbf{M}^{c(e)} \mathbf{B}$, with $c(e)$ denoting the
+calibration unit to which epoch~$e$ belongs.
 All epochs of source~$s$ are stacked into a single design matrix
 $[\mathbf{E}^\text{corr}_{e_1}; \mathbf{E}^\text{corr}_{e_2};
 \ldots]$ and solved as one robust regression.
@@ -663,8 +667,9 @@ $\Delta\mathbf{M}$) are:
 \begin{equation}
   r_{n,p} = f_{n,p} - \bigl(\mathbf{E}\, \mathbf{b}_{s(n)}\bigr)_p,
 \end{equation}
-where $n$ indexes epochs through CU~$c$ and $p$ indexes output
-samples.  The correction model for these residuals is:
+where $n$ indexes epochs belonging to CU~$c$ (we use $n$ rather
+than~$e$ to distinguish this CU-specific indexing from the per-source
+epoch indexing in the SU) and $p$ indexes output samples.  The correction model for these residuals is:
 \begin{equation}
   r_{n,p} = \sum_q \Delta M^c_{pq}\, h_{s(n),q} + \text{noise},
 \end{equation}
@@ -679,15 +684,15 @@ This allows the $P \times P$ matrix to be solved as $P$ independent
 regressions, each with $P$~parameters and $N_c$~epochs:
 \begin{equation}
   \label{eq:iu-row}
-  \min_{\boldsymbol{\delta}_p}
+  \min_{\mathbf{m}_p}
     \sum_{n=1}^{N_c}
       \rho_\delta\!\Biggl(
-        \frac{r_{n,p} - \mathbf{h}_{s(n)}^\top \boldsymbol{\delta}_p}
+        \frac{r_{n,p} - \mathbf{h}_{s(n)}^\top \mathbf{m}_p}
              {\sigma_{n,p}}
       \Biggr)
-    + \frac{\lambda}{2} \|\boldsymbol{\delta}_p\|^2,
+    + \frac{\lambda}{2} \|\mathbf{m}_p\|^2,
 \end{equation}
-where $\boldsymbol{\delta}_p = \Delta\mathbf{M}^c[p, :]$.  This
+where $\mathbf{m}_p = \Delta\mathbf{M}^c[p, :]$ is the $p$-th row of the correction matrix.  This
 gives $P^2$ parameters per CU (e.g., $53^2 = 2809$ for BP), solved
 efficiently as $P$ small independent problems.
 
@@ -709,32 +714,32 @@ Reweighted Least Squares (IRLS).  The general problem is:
 \begin{equation}
   \label{eq:irls-problem}
   \min_{\mathbf{x}}
-    \sum_i \rho_\delta\!\bigl(b_i^s - (\mathbf{A}^s \mathbf{x})_i\bigr)
+    \sum_i \rho_\delta\!\bigl(\tilde{b}_i - (\tilde{\mathbf{A}} \mathbf{x})_i\bigr)
     + \frac{\lambda}{2} \|\mathbf{x}\|^2,
 \end{equation}
-where $\mathbf{A}^s = \mathbf{A} / \boldsymbol{\sigma}$ and
-$\mathbf{b}^s = \mathbf{b} / \boldsymbol{\sigma}$ are pre-scaled by
+where $\tilde{\mathbf{A}} = \mathbf{A} / \boldsymbol{\sigma}$ and
+$\tilde{\mathbf{b}} = \mathbf{b} / \boldsymbol{\sigma}$ are pre-scaled by
 measurement errors.  For the source update, $\lambda = 0$.
 
 \paragraph{Algorithm.}
 \begin{enumerate}
   \item \textbf{Initialise:} solve the unweighted (OLS) problem
     \[
-      \bigl(\mathbf{A}^{s\top} \mathbf{A}^s + \lambda\,\mathbf{I}\bigr)\,
+      \bigl(\tilde{\mathbf{A}}^\top \tilde{\mathbf{A}} + \lambda\,\mathbf{I}\bigr)\,
         \mathbf{x}
-      = \mathbf{A}^{s\top} \mathbf{b}^s.
+      = \tilde{\mathbf{A}}^\top \tilde{\mathbf{b}}.
     \]
   \item \textbf{Iterate} (up to 30 iterations):
     \begin{enumerate}
       \item Compute standardised residuals:
-        $z_i = b^s_i - (\mathbf{A}^s \mathbf{x})_i$.
+        $z_i = \tilde{b}_i - (\tilde{\mathbf{A}} \mathbf{x})_i$.
       \item Compute IRLS weights:
         $w_i = \min\!\bigl(1,\; \delta / |z_i|\bigr)$.
       \item Solve the weighted normal equations:
         \[
-          \bigl(\mathbf{A}^{s\top} \mathbf{W} \mathbf{A}^s
+          \bigl(\tilde{\mathbf{A}}^\top \mathbf{W} \tilde{\mathbf{A}}
             + \lambda\,\mathbf{I}\bigr)\, \mathbf{x}_\text{new}
-          = \mathbf{A}^{s\top} \mathbf{W}\, \mathbf{b}^s,
+          = \tilde{\mathbf{A}}^\top \mathbf{W}\, \tilde{\mathbf{b}},
         \]
         where $\mathbf{W} = \operatorname{diag}(\mathbf{w})$.
       \item Check convergence:
@@ -745,7 +750,7 @@ measurement errors.  For the source update, $\lambda = 0$.
 \end{enumerate}
 
 The linear system in each IRLS step is solved via Cholesky
-factorisation ($\mathbf{A}^{s\top} \mathbf{W} \mathbf{A}^s +
+factorisation ($\tilde{\mathbf{A}}^\top \mathbf{W} \tilde{\mathbf{A}} +
 \lambda\,\mathbf{I}$ is positive definite for $\lambda > 0$).
 
 \paragraph{Convergence.}
@@ -854,7 +859,7 @@ The key implementation difference between modes:
   & \textbf{per-cu} & \textbf{identity} \\
   \midrule
   CUs solved            & 28 (all)     & 26 (ref skipped)   \\
-  Iterations            & 14           & 15                  \\
+  Iterations            & 14 (converged) & 15                \\
   Loss after iter 1     & $1.268 \times 10^6$ & $1.317 \times 10^6$ \\
   Final loss            & $1.161 \times 10^6$ & $1.174 \times 10^6$ \\
   Total loss reduction  & $-8.4\%$     & $-10.8\%$    \\
@@ -876,7 +881,9 @@ The key implementation difference between modes:
   \bottomrule
 \end{tabular}
 \caption{Comparison of per-cu and identity Aij modes (1000 sources,
-  ref CU = row~4 FoV~Following).  Per-cu achieves
+  ref CU = row~4 FoV~Following).  Per-cu converged early at
+  iteration~14 (relative loss change $< 10^{-4}$); identity ran
+  the full 15~iterations.  Per-cu achieves
   ${\sim}1\%$ lower total loss by solving all 28~CUs with a nominal
   Aij baseline; residual statistics are identical.}
 \label{tab:aij-comparison}
