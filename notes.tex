@@ -265,7 +265,7 @@ $N$ source IDs (sorted), and all their epochs are included.
     & \textbf{Purpose} \\
   \midrule
   200  & 160 & 40  & 20\% & \num{408300}  & \num{98879}  & Pilot runs \\
-  1000 & 700 & 300 & 30\% & \num{1900814} & \num{814925} & Experiment runs \\
+  1000 & 700 & 300 & 30\% & \num{1900759} & \num{814869} & Experiment runs \\
   \bottomrule
 \end{tabular}
 \caption{Experimental source subsets. Train/test split is random with
@@ -833,7 +833,7 @@ reference CU treatment.  The primary runs use 1000~sources
 $\delta = 1.345$, $\lambda = 10^4$, seed~42, and the corrected
 reference CU (row~4, FoV~Following, read from config).  After
 filtering, 964~BP and 932~RP sources remain, with
-\num{1900814}~training and \num{814925}~test observations.  A
+\num{1900759}~training and \num{814869}~test observations.  A
 200-source pilot run (Section~\ref{sec:scaling}) confirms that the
 findings are stable across sample sizes.
 
@@ -859,32 +859,32 @@ The key implementation difference between modes:
   & \textbf{per-cu} & \textbf{identity} \\
   \midrule
   CUs solved            & 28 (all)     & 26 (ref skipped)   \\
-  Iterations            & 14 (converged) & 15                \\
-  Loss after iter 1     & $1.268 \times 10^6$ & $1.317 \times 10^6$ \\
-  Final loss            & $1.161 \times 10^6$ & $1.174 \times 10^6$ \\
-  Total loss reduction  & $-8.4\%$     & $-10.8\%$    \\
+  Iterations            & 14 (converged) & 15 (converged)    \\
+  Loss after iter 1     & $1.207 \times 10^6$ & $1.256 \times 10^6$ \\
+  Final loss            & $1.100 \times 10^6$ & $1.113 \times 10^6$ \\
+  Total loss reduction  & $-8.9\%$     & $-11.4\%$    \\
   \midrule
-  Train data loss       & $7.556 \times 10^5$ & $7.654 \times 10^5$ \\
-  Test data loss        & $3.961 \times 10^5$ & $3.987 \times 10^5$ \\
+  Train data loss       & $7.555 \times 10^5$ & $7.653 \times 10^5$ \\
+  Test data loss        & $3.348 \times 10^5$ & $3.374 \times 10^5$ \\
   Train loss/obs        & 0.3975       & 0.4027       \\
-  Test loss/obs         & 0.4861       & 0.4892       \\
-  Test/train ratio      & 1.223        & 1.215        \\
+  Test loss/obs         & 0.4110       & 0.4140       \\
+  Test/train ratio      & 1.034        & 1.028        \\
   \midrule
-  Reg.\ penalty (final) & $9.651 \times 10^3$ & $1.018 \times 10^4$ \\
+  Reg.\ penalty (final) & $9.650 \times 10^3$ & $1.018 \times 10^4$ \\
   \midrule
   BP sources increased  & 0/964        & 0/964        \\
   RP sources increased  & 0/932        & 0/932        \\
   \midrule
-  Residual std          & 9.181        & 9.178        \\
+  Residual std          & 8.307        & 8.305        \\
   Residual MAD          & 2.000        & 2.000        \\
-  $|r| > 5$             & 24.89\%      & 24.89\%      \\
+  $|r| > 5$             & 24.89\%      & 24.88\%      \\
   \bottomrule
 \end{tabular}
 \caption{Comparison of per-cu and identity Aij modes (1000 sources,
-  ref CU = row~4 FoV~Following).  Per-cu converged early at
-  iteration~14 (relative loss change $< 10^{-4}$); identity ran
-  the full 15~iterations.  Per-cu achieves
-  ${\sim}1\%$ lower total loss by solving all 28~CUs with a nominal
+  ref CU = row~4 FoV~Following).  Per-cu converged at
+  iteration~14 (relative loss change $< 10^{-4}$); identity converged
+  at iteration~15.  Per-cu achieves
+  ${\sim}1.2\%$ lower total loss by solving all 28~CUs with a nominal
   Aij baseline; residual statistics are identical.}
 \label{tab:aij-comparison}
 \end{table}
@@ -904,10 +904,10 @@ the relative change per iteration falls below $0.05\%$ in both modes.
   \toprule
   \textbf{Iter} & \textbf{per-cu} & \textbf{identity} \\
   \midrule
-  1  & $1.268 \times 10^6$ & $1.317 \times 10^6$ \\
-  2  & $1.193 \times 10^6$ & $1.212 \times 10^6$ \\
-  5  & $1.167 \times 10^6$ & $1.182 \times 10^6$ \\
-  10 & $1.162 \times 10^6$ & $1.176 \times 10^6$ \\
+  1  & $1.207 \times 10^6$ & $1.256 \times 10^6$ \\
+  2  & $1.132 \times 10^6$ & $1.151 \times 10^6$ \\
+  5  & $1.105 \times 10^6$ & $1.120 \times 10^6$ \\
+  10 & $1.101 \times 10^6$ & $1.114 \times 10^6$ \\
   \bottomrule
 \end{tabular}
 \caption{Total loss after IU at selected iterations (1000 sources).}
@@ -928,13 +928,14 @@ with ${\sim}90\%$ of improvement in the first 3--4 iterations.
 
 No overfitting is observed in either mode.  Both training and test
 data losses decrease monotonically through all iterations.  The
-test/train ratio stabilises at ${\sim}1.22$ in both modes, higher than
-the ${\sim}1.08$ observed in 200-source runs.  The increase is
-attributable to the larger test fraction (30\% vs 20\%) and the
-greater diversity of sources: the 1000-source sample includes fainter
-and more challenging sources not present in the 200-source subset.
-The identity mode has a marginally \emph{lower} test/train ratio
-($1.215$ vs $1.223$), because the gauge constraint
+test/train ratio stabilises at ${\sim}1.03$ in both modes, indicating
+near-perfect generalisation of the shared instrument model.  Despite
+the larger test fraction (30\% vs 20\%) and greater source diversity,
+the 1000-source runs achieve \emph{lower} test/train ratios than the
+200-source pilot (${\sim}1.08$), because more training sources
+provide tighter constraints on $\Delta\mathbf{M}$.  The identity mode
+has a marginally lower test/train ratio ($1.028$ vs $1.034$), because
+the gauge constraint
 ($\Delta\mathbf{M}^{\text{ref}} = \mathbf{0}$) acts as an additional
 implicit regulariser.
 
@@ -947,10 +948,10 @@ magnitude of the learned instrument corrections:
 \begin{itemize}
   \item \textbf{per-cu} ($9.65 \times 10^3$): 28~CUs contribute,
     each with a small $\Delta\mathbf{M}^c$ (corrections on top of the
-    nominal model).  The per-CU penalty is $9651/28 = 345$.
+    nominal model).  The per-CU penalty is $9650/28 = 345$.
   \item \textbf{identity} ($1.02 \times 10^4$): 26~CUs contribute
     (reference excluded), each encoding the full LSF convolution.
-    The per-CU penalty is $10185/26 = 392$, confirming that individual
+    The per-CU penalty is $10183/26 = 392$, confirming that individual
     corrections are ${\sim}14\%$ larger without a nominal model
     baseline.
 \end{itemize}
@@ -1003,11 +1004,11 @@ all CUs without excluding the reference.
   & per-cu & identity & per-cu & identity \\
   \midrule
   Sources (BP / RP)     & 187 / 182 & 187 / 182 & 964 / 932 & 964 / 932 \\
-  Train observations    & \num{408300} & \num{408300} & \num{1900814} & \num{1900814} \\
+  Train observations    & \num{408300} & \num{408300} & \num{1900759} & \num{1900759} \\
   Test fraction         & 20\%    & 20\%    & 30\%    & 30\%    \\
   Train loss/obs        & 0.359   & 0.367   & 0.398   & 0.403   \\
-  Test loss/obs         & 0.390   & 0.394   & 0.486   & 0.489   \\
-  Test/train ratio      & 1.087   & 1.073   & 1.223   & 1.215   \\
+  Test loss/obs         & 0.390   & 0.394   & 0.411   & 0.414   \\
+  Test/train ratio      & 1.087   & 1.073   & 1.034   & 1.028   \\
   Residual MAD          & 2.046   & 2.046   & 2.000   & 2.000   \\
   $|r| > 5$             & 25.0\%  & 25.0\%  & 24.9\%  & 24.9\%  \\
   \bottomrule
@@ -1018,7 +1019,7 @@ all CUs without excluding the reference.
 \end{table}
 
 \noindent
-Two trends emerge:
+Three trends emerge:
 \begin{enumerate}
   \item \textbf{Residual quality improves.}  The MAD drops from
     $2.046$ to $2.000$ ($-2.2\%$) and the fraction of large residuals
@@ -1032,6 +1033,12 @@ Two trends emerge:
     model (with ${\sim}2800$ parameters per CU) is shared across all
     sources and cannot simultaneously optimise for a more diverse
     population.
+  \item \textbf{Generalisation improves.}  The test/train ratio
+    \emph{decreases} from ${\sim}1.08$ at 200~sources to ${\sim}1.03$
+    at 1000~sources, despite the larger test fraction (30\% vs 20\%).
+    More training data constrains $\Delta\mathbf{M}$ better, yielding
+    an instrument model that generalises more uniformly to unseen
+    sources.
 \end{enumerate}
 
 \noindent
@@ -1045,16 +1052,16 @@ both scales.
 
 \begin{enumerate}
   \item \textbf{Per-cu mode achieves the lowest total loss}
-    ($1.161 \times 10^6$) by solving all 28~CUs with a physically
-    motivated nominal model.  The ${\sim}1\%$ advantage over identity
+    ($1.100 \times 10^6$) by solving all 28~CUs with a physically
+    motivated nominal model.  The ${\sim}1.2\%$ advantage over identity
     mode comes primarily from correcting the reference CU and
     providing a better Aij baseline.
 
   \item \textbf{Residual statistics are identical.}  Both
-    modes produce std~$\approx 9.18$, MAD~$= 2.000$, and
-    $|r| > 5 = 24.89\%$.  Zero sources show increased chi2 in either
-    mode.  The loss gap is spread uniformly across all sources and
-    samples rather than concentrated in specific outliers.
+    modes produce std~$\approx 8.31$, MAD~$= 2.000$, and
+    $|r| > 5 \approx 24.89\%$.  Zero sources show increased chi2 in
+    either mode.  The loss gap is spread uniformly across all sources
+    and samples rather than concentrated in specific outliers.
 
   \item \textbf{$\Delta\mathbf{M}$ has ample capacity.}  With
     $P^2 \approx 2800$ free parameters per CU, the instrument
@@ -1070,10 +1077,11 @@ both scales.
     the LSF.  The calibrated spectra are indistinguishable.
 
   \item \textbf{No overfitting at either scale.}  Both training and
-    test losses decrease monotonically in all runs.  The higher
-    test/train ratio at 1000~sources (${\sim}1.22$ vs ${\sim}1.08$)
-    reflects population heterogeneity rather than overfitting: the
-    test set contains sources that differ more from the training set.
+    test losses decrease monotonically in all runs.  The test/train
+    ratio at 1000~sources (${\sim}1.03$) is \emph{lower} than at
+    200~sources (${\sim}1.08$), indicating that the larger training
+    set better constrains $\Delta\mathbf{M}$ and improves
+    generalisation.
 
   \item \textbf{Identity mode requires gauge-fixing.}  Without a
     physical prior, the reference CU must be excluded from the
